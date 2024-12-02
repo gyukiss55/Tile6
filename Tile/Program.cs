@@ -2,6 +2,6 @@
 using Tile;
 
 Console.WriteLine("Hello, Hexa Calendar!");
-Tile6 tile6 = new Tile6();
-tile6.Execute();
-Console.WriteLine("Done");
+{
+    MainProcess.Execute(args);
+}

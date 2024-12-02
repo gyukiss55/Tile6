@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using static Tile.JsonStringTokenizer;
 
 namespace Tile
 {
@@ -42,6 +44,18 @@ namespace Tile
 
         protected List<Pair<int>> lastTerritory = new List<Pair<int>>();
 
+        protected const int ShapeNumber = 11;
+        //private long lastMS = 0;
+        private int sipiListCountMax = 0;
+
+        protected static Semaphore semaphore = new Semaphore(1, 11);
+        private int cntPlaceShape = 0;
+        public int tile6ID { get; set; }
+        public int stepIndex { get; set; }
+        public int GetCntPlaceShape () { return cntPlaceShape; }
+        public int GetSipiListCountMax() { return sipiListCountMax; }
+
+
         public Tile6Base ()
         {
             timerTest = new TimerTest();
@@ -50,6 +64,9 @@ namespace Tile
 
         protected void InitTableBase()
         {
+            cntPlaceShape = 0;
+            sipiListCountMax = 0;
+
             pairsInhibit.Add(new Pair<int>(0, 0));
             pairsInhibit.Add(new Pair<int>(1, 0));
             pairsInhibit.Add(new Pair<int>(7, 0));
@@ -96,6 +113,7 @@ namespace Tile
 
         protected void DumpTable()
         {
+            semaphore.WaitOne();
             Console.WriteLine("Dump table - begin");
             for (int y = 0; y < 9; ++y)
             {
@@ -103,16 +121,23 @@ namespace Tile
                 {
                     if (y % 2 == 0)
                     {
-                        Console.Write($"{table[y, x].ToString("X")}  ");
+                        if (table[y, x] == 0)
+                            Console.Write(".  ");
+                        else
+                            Console.Write($"{table[y, x].ToString("X")}  ");
                     }
                     else
                     {
-                        Console.Write($" {table[y, x].ToString("X")} ");
+                        if (table[y, x] == 0)
+                            Console.Write(" . ");
+                        else
+                            Console.Write($" {table[y, x].ToString("X")} ");
                     }
                 }
                 Console.WriteLine("");
             }
             Console.WriteLine("Dump table - end");
+            semaphore.Release();
         }
 
         bool TestTableIndex(int x, int y)
@@ -153,11 +178,11 @@ namespace Tile
             {
                 neighboursList.Add(new Pair<int>(x1 + 1, y - 1));
             }
-            if (TestTableValue(x - 1, y) == 0 && !tableHashSet.Contains(ToHashValue(x1 - 1, y)))
+            if (TestTableValue(x - 1, y) == 0 && !tableHashSet.Contains(ToHashValue(x - 1, y)))
             {
                 neighboursList.Add(new Pair<int>(x - 1, y));
             }
-            if (TestTableValue(x + 1, y) == 0 && !tableHashSet.Contains(ToHashValue(x1 + 1, y)))
+            if (TestTableValue(x + 1, y) == 0 && !tableHashSet.Contains(ToHashValue(x + 1, y)))
             {
                 neighboursList.Add(new Pair<int>(x + 1, y));
             }
@@ -206,10 +231,6 @@ namespace Tile
                             }
                             neighboursList.Clear();
 
-                            //foreach (Pair<int> pair in pairList)
-                            {
-                                //tableHashSet
-                            }
                             foreach (Pair<int> pair in pairList)
                             {
                                 if (!tableHashSetCheck.Contains(ToHashValue(pair.Value1, pair.Value2)))
@@ -222,11 +243,7 @@ namespace Tile
                             }
                         }
                         if (pairList.Count < 5)
-                        {
-                            //Console.WriteLine($"CheckIslands: {x}, {y} = {pairList.Count}");
-                            //DumpTable();
                             return false;
-                        }
                     }
                 }
             }
@@ -306,6 +323,11 @@ namespace Tile
                 lastY = y;
                 lastR = r;
                 lastTerritory = pairList;
+                lastTerritory.Sort((pair1, pair2) =>
+                {
+                    int firstComparison = pair1.Value1.CompareTo(pair2.Value1);
+                    return firstComparison != 0 ? firstComparison : pair1.Value2.CompareTo(pair2.Value2);
+                });
             }
             // remove later begin
             //DumpTable();
@@ -407,7 +429,7 @@ namespace Tile
             bool ret = false;
             int x = 0, y = 0, r = 0;
             HashSet<long> territoryHashSet = new HashSet<long>();
-            for (int i = 0; i < 50 * 6; ++i)
+            for (int i = 0; i < 200 * 6; ++i)
             {
                 needFeedBack = true;
                 if (shapeIndex < 1 || shapeIndex > listOfShapes.Count)
@@ -420,7 +442,7 @@ namespace Tile
                     if (territoryHashSet.Contains(hashActual))
                     {
                         //DumpTable();
-                        //Console.WriteLine($"PlaceOneShape index: {shapeIndex}, nr: {shapePositionList.Count} already have it");
+                        //Console.WriteLine($"PlaceOneShape index: {shapeIndex}, x:{x}, y:{y}, r:{r}, nr: {shapePositionList.Count} already have it");
                     }
                     else
                     {
@@ -449,7 +471,7 @@ namespace Tile
             bool ret = false;
             needFeedBack = false;
 
-            for (int shapeIndex = 1; shapeIndex <= 11 && shapeIndex > 0; shapeIndex++)
+            for (int shapeIndex = 1; shapeIndex <= ShapeNumber && shapeIndex > 0; shapeIndex++)
             {
                 List<int> shape = listOfShapes[shapeIndex - 1];
                 ret = PlaceShape(shapeIndex, shape);
@@ -466,6 +488,7 @@ namespace Tile
 
         int PlaceShape(int shapeIndex, int step, ref List<ShapePossiblePosition> sppList)
         {
+            cntPlaceShape++;
             ShapePossiblePosition actuale = sppList[shapeIndex - 1];
             if (actuale.shapeIndex != shapeIndex)
             {
@@ -473,7 +496,9 @@ namespace Tile
                 return -2;
             }
             if (actuale.territoryList.Count <= step)
-                return 0;
+            {
+                return -1;
+            }
 
             foreach (Pair<int> pair in actuale.territoryList[step])
             {
@@ -485,28 +510,16 @@ namespace Tile
             {
                 SetTable(shapeIndex, pair);
             }
+
             if (CheckIslands() == false)
             {
                 foreach (Pair<int> pair in actuale.territoryList[step])
                 {
                     SetTable(0, pair);
                 }
-                return -1;
+                return 0;
             }
-/*
-            shapeStatusList.Add(new ShapeStatus(shapeIndex, new Pair<int>(x, y), r));
 
-            if (needFeedBack)
-            {
-                lastX = x;
-                lastY = y;
-                lastR = r;
-                lastTerritory = pairList;
-            }
-*/
-            // remove later begin
-            //DumpTable();
-            // remove later end
             return 1;
         }
 
@@ -517,10 +530,15 @@ namespace Tile
             do
             {
                 sipiList.RemoveAt(sipiList.Count - 1);
-                if (sipiList.Count > 0)
+                if (sipiList.Count > 1)
                 {
                     int shi = sipiList[sipiList.Count - 1].Value1;
-                    int sti = sipiList[sipiList.Count - 1].Value2 + 1;
+                    int sti = sipiList[sipiList.Count - 1].Value2;
+                    foreach (Pair<int> pair in sppList[shi - 1].territoryList[sti])
+                    {
+                        SetTable(0, pair);
+                    }
+                    sti++;
                     sipiList[sipiList.Count - 1] = new Pair<int>(shi, sti);
                     if (sti < sppList[sipiList[sipiList.Count - 1].Value1 - 1].territoryList.Count)
                     {
@@ -538,38 +556,82 @@ namespace Tile
             return ret;
         }
 
-        protected bool PlaceAllShapes(int firstIndex, ref List<ShapePossiblePosition> sppList)
+        private bool CheckTable (List<Pair<int>> sipiList, int retPlace)
+        {
+            int maxPlace = sipiList.Count;
+            if (retPlace != 1)
+                maxPlace--;
+            int[] cntArray = { 0,0,0,0,0,0,0,0,0,0,0 };
+            for (int x = 0; x < 9; x++)
+            {
+                for (int y = 0; y < 9; y++)
+                {
+                    if (table[y, x] > 11)
+                        continue;
+                    if (table[y, x] > 0)
+                        cntArray[table[y, x]-1]++;
+                }
+            }
+            bool ret = true;
+            for (int i = 0; i < 11; i++)
+            {
+                if (i < maxPlace)
+                {
+                    if (cntArray[i] != 5 && cntArray[i] != 6)
+                        ret = false;
+                } else
+                {
+                    if (cntArray[i] > 0)
+                        ret = false;
+                }
+            }
+            if (!ret)
+            {
+                Console.WriteLine("Mistake!!!");
+            }
+            return ret;
+        }
+
+        protected bool PlaceAllShapes(int shapeIndex, ref List<ShapePossiblePosition> sppList, ConcurrentStack<JsonStringTokenizer.SolvedItem> solvedItemStack)
         {
             bool ret = false;
             //needFeedBack = false;
-            List<int> siOrderList = new List<int>(); // shape order / 
-            siOrderList.Add(firstIndex);
-            for (int shapeIndex = 1; shapeIndex <= 11 && shapeIndex > 0; shapeIndex++)
-            {
-                if (shapeIndex == firstIndex)
-                    continue;
-                siOrderList.Add(shapeIndex);
-            }
-            List<Pair<int>> sipiList = new List<Pair<int>>(); // shapeIndex / 
-            sipiList.Add(new Pair<int>(firstIndex, 0));
 
-            while (sipiList[0].Value2 < sppList[firstIndex - 1].territoryList.Count)
+            List<Pair<int>> sipiList = new List<Pair<int>>(); // shapeIndex / 
+            sipiList.Add(new Pair<int>(1, shapeIndex));
+
+            while (sipiList.Count >= 1)
             {
                 bool done = false;
                 int currentShapeIndex = sipiList[sipiList.Count - 1].Value1;
                 int currentStepIndex = sipiList[sipiList.Count - 1].Value2;
+
                 int iRet = PlaceShape(currentShapeIndex, currentStepIndex, ref sppList);
+                CheckTable(sipiList, iRet);
                 switch (iRet)
                 {
                     case 1:  // placed
-                        if (sipiList.Count == 11)
+                        if (sipiList.Count == ShapeNumber)
                         {
                             ret = true;
                             done = true;
+                            DumpTable();
+                            DumpStepStatus(ref sppList, sipiList);   
                         }
                         else
                         {
-                            sipiList.Add(new Pair<int>(siOrderList[sipiList.Count], 0));
+                            sipiList.Add(new Pair<int>(sppList[sipiList.Count].shapeIndex, 0));
+                            if (sipiList.Count > 2 && sipiListCountMax < sipiList.Count)
+                            {
+                                sipiListCountMax = sipiList.Count;
+                                /*
+                                if (sipiListCountMax >= 11)
+                                {
+                                    Console.WriteLine($"step:{sipiList[0].Value2}, sipiListCountMax:{sipiListCountMax}");
+                                    DumpTable();
+                                }
+                                */
+                            }
                         }
                         break;
                     case 0: // not placed 
@@ -581,16 +643,19 @@ namespace Tile
                             ret = StepBack(ref sipiList, ref sppList);
                             if (!ret)
                                 done = true;
+                            //DumpTable();
                         }
                         break;
                     case -1: // step back 
                         ret = StepBack(ref sipiList, ref sppList);
                         if (!ret)
                             done = true;
+                        //DumpTable();
                         break;
                     default: // fatal error!!
                         done = true;
                         ret = false;
+                        //DumpTable();
                         break;
                 }
                 if (done)
@@ -599,9 +664,37 @@ namespace Tile
                 }
             }
 
-            Console.WriteLine($"PlaceShape:{ret}");
+            //Console.WriteLine($"PlaceShape:{ret}");
+            if (ret)
+            {
+                //DumpTable();
+                Console.WriteLine($"PlaceShape:{ret}");
+                JsonStringTokenizer.SolvedItem solvedItem = new JsonStringTokenizer.SolvedItem();
+                foreach (Pair<int> sipi in sipiList )
+                {
+                    int index = sipi.Value1;
+                    int posIndex = sipi.Value2;
+                    
+                    JsonStringTokenizer.ShapePosition shapePosition = new JsonStringTokenizer.ShapePosition();
+                    shapePosition.index = index;
+                    shapePosition.orientation = sppList[index - 1].shapePositionList[posIndex].orientation;
+                    int x = sppList[index - 1].shapePositionList[posIndex].position.Value1;
+                    int y = sppList[index - 1].shapePositionList[posIndex].position.Value2;
+                    JsonStringTokenizer.Position  pos = new JsonStringTokenizer.Position { first = x, second = y };
+                    shapePosition.position = pos;
+                    solvedItem.shapePositionList.Add(shapePosition);
+                }
+                solvedItemStack.Push(solvedItem);
+            } 
             return ret;
         }
-
+        void DumpStepStatus(ref List<ShapePossiblePosition> sppList, List<Pair<int>> sipiList)
+        {
+            Console.WriteLine($"DumpStepStatus: {sipiList.Count}");
+            foreach(Pair<int> p in sipiList)
+            {
+                Console.WriteLine($"ix:{p.Value1}, pos:{sppList[p.Value1 - 1].shapePositionList[p.Value2].position}, orient:{sppList[p.Value1 - 1].shapePositionList[p.Value2].orientation}");
+            }
+        }
     }
 }
